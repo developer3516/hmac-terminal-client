@@ -32,13 +32,15 @@ export class TimeoutError extends TerminalError {
 
 /** The server responded with a non-2xx status. */
 export class ApiError extends TerminalError {
-  constructor(message, { status, code, body, requestId, headers, cause } = {}) {
+  constructor(message, { status, code, body, requestId, headers, retryAfterMs, cause } = {}) {
     super(message, { cause });
     this.status = status;
     this.code = code ?? null;
     this.body = body ?? null;
     this.requestId = requestId ?? null;
     this.headers = headers ?? {};
+    /** Parsed `Retry-After`, or null when the server sent no hint. */
+    this.retryAfterMs = retryAfterMs ?? null;
   }
 
   /**
@@ -51,15 +53,21 @@ export class ApiError extends TerminalError {
       pluck(body, 'error') ??
       `Request failed with status ${status}`;
 
-    const shared = { status, code, body, headers, requestId };
+    // 429 is the obvious carrier of `Retry-After`, but 503 uses it too, and a
+    // retry loop that only reads the header on one of them ignores the
+    // server exactly when it is asking hardest to be left alone.
+    const shared = {
+      status,
+      code,
+      body,
+      headers,
+      requestId,
+      retryAfterMs: parseRetryAfter(headers['retry-after']),
+    };
 
     if (status === 401 || status === 403) return new AuthError(message, shared);
-    if (status === 429) {
-      return new RateLimitError(message, {
-        ...shared,
-        retryAfterMs: parseRetryAfter(headers['retry-after']),
-      });
-    }
+    if (status === 429) return new RateLimitError(message, shared);
+
     return new ApiError(message, shared);
   }
 }
@@ -67,13 +75,8 @@ export class ApiError extends TerminalError {
 /** 401/403 — the signature, key id, or permissions were rejected. */
 export class AuthError extends ApiError {}
 
-/** 429 — throttled. `retryAfterMs` is null when the server sent no hint. */
-export class RateLimitError extends ApiError {
-  constructor(message, { retryAfterMs = null, ...rest } = {}) {
-    super(message, rest);
-    this.retryAfterMs = retryAfterMs;
-  }
-}
+/** 429 — throttled. Carries `retryAfterMs` like any other `ApiError`. */
+export class RateLimitError extends ApiError {}
 
 function pluck(body, key) {
   if (body && typeof body === 'object' && typeof body[key] === 'string') {

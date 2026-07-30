@@ -48,6 +48,10 @@ function makeClient(fetchImpl, overrides = {}) {
     keyId: KEY_ID,
     secret: SECRET,
     fetch: fetchImpl,
+    // These cases are about request construction and error mapping. Leaving
+    // retries on would have each of them silently issue three requests and
+    // wait out the backoff — see retry.test.js for the retry behaviour.
+    retry: false,
     ...overrides,
   });
 }
