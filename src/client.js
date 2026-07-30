@@ -5,6 +5,7 @@
  * empty dependency tree — no agent, no polyfill, no transitive supply chain.
  */
 
+import { pool } from './bulk.js';
 import { ApiError, ConfigError, NetworkError, TimeoutError } from './errors.js';
 import {
   DEFAULT_RETRY_POLICY,
@@ -206,6 +207,27 @@ export class TerminalClient {
 
   delete(path, options) {
     return this.request('DELETE', path, options).then((r) => r.data);
+  }
+
+  /**
+   * Send many signed requests with bounded concurrency.
+   *
+   * Each entry is `{ method, path, ...callOptions }`. Resolves to one settled
+   * result per request, in input order — see `pool` for the shape.
+   *
+   * Unlike the verb helpers these keep the full `{ status, headers, data }`.
+   * Across a batch the per-item status is usually the thing you were after.
+   *
+   * @param {Array<object>} requests
+   * @param {object} [options]  concurrency, stopOnError, signal
+   */
+  bulk(requests, options = {}) {
+    return pool(
+      requests,
+      ({ method = 'GET', path, ...callOptions }) =>
+        this.request(method, path, { signal: options.signal, ...callOptions }),
+      options,
+    );
   }
 }
 
