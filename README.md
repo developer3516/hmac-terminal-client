@@ -9,8 +9,9 @@
 Signs requests with HMAC-SHA256 over a canonical request form, verifies them with
 the same code path, and gives you a typed error for every way a call can fail.
 
-No runtime dependencies. No dev dependencies either — tests run on the Node
-built-in test runner. `npm install` fetches nothing.
+Ships TypeScript declarations. No runtime dependencies, and no dev
+dependencies either — tests run on the Node built-in test runner.
+`npm install` fetches nothing.
 
 ---
 
@@ -262,6 +263,37 @@ that can run `ps`, and it lands in shell history.
 
 ---
 
+## TypeScript
+
+Types ship with the package — `src/index.d.ts`, no `@types` install, no build
+step.
+
+```ts
+import { TerminalClient, type TerminalResponse, type SettledResult } from 'hmac-terminal-client';
+
+const client = new TerminalClient({ baseUrl, keyId, secret });
+
+const terminals = await client.get<Terminal[]>('/terminals');
+const { status, data } = await client.request<Terminal>('GET', '/terminals/T-1');
+```
+
+The declarations are **hand-written**. Adding TypeScript purely to emit them
+would put the first entry in a `devDependencies` block that is empty on
+purpose, and the package installing nothing is worth more than a build step.
+
+The obvious objection to hand-written types is that they drift — a new export
+ships and nobody updates the declarations, or a rename leaves one pointing at
+something that no longer exists. So the suite checks it, without TypeScript:
+it compares the runtime export list against the declarations in both
+directions, and asserts the declared `extends` chain matches the real
+prototype chain, since that is what consumers narrow on.
+
+What it does **not** check is shapes — nothing would catch a parameter typed
+`string` that should be `number`. It catches the whole category of missing and
+stale declarations, which is the one that actually bites.
+
+---
+
 ## The signing scheme
 
 The canonical request is seven LF-separated lines, with no trailing newline:
@@ -400,7 +432,7 @@ length check happens first and fails the same way every other check does.
 ## Tests
 
 ```bash
-npm test        # 166 tests, node:test, no install required
+npm test        # 174 tests, node:test, no install required
 npm run coverage
 ```
 
