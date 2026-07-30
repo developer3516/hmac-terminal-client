@@ -1,0 +1,34 @@
+{
+  "name": "hmac-terminal-client",
+  "version": "0.1.0",
+  "description": "Zero-dependency Node client for HMAC-signed terminal APIs — canonical request signing, constant-time verification, and a signature self-test harness.",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test",
+    "test:watch": "node --test --watch",
+    "coverage": "node --test --experimental-test-coverage"
+  },
+  "keywords": [
+    "hmac",
+    "hmac-sha256",
+    "request-signing",
+    "api-client",
+    "zero-dependency",
+    "webhook-verification"
+  ],
+  "license": "MIT",
+  "dependencies": {},
+  "devDependencies": {}
+}
