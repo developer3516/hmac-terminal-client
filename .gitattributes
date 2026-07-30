@@ -1,0 +1,3 @@
+# Normalise to LF in the repository. Windows checkouts still get CRLF locally
+# where the platform expects it, but CI on Linux sees consistent bytes.
+* text=auto eol=lf
