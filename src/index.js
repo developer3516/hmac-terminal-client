@@ -13,6 +13,15 @@ export {
 } from './errors.js';
 
 export {
+  DEFAULT_RETRY_POLICY,
+  IDEMPOTENT_METHODS,
+  computeDelay,
+  isRetryableError,
+  resolvePolicy,
+  sleep,
+} from './retry.js';
+
+export {
   DEFAULT_TOLERANCE_MS,
   HEADER,
   SIGNATURE_VERSION,

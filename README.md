@@ -98,13 +98,61 @@ TerminalError
 ├── SignatureError   the signing input was malformed
 ├── NetworkError     DNS / TCP / TLS / dropped socket
 ├── TimeoutError     aborted locally after `timeoutMs`
-└── ApiError         non-2xx response  (.status .code .body .requestId)
+└── ApiError         non-2xx  (.status .code .body .requestId .retryAfterMs)
     ├── AuthError        401, 403
-    └── RateLimitError   429  (.retryAfterMs, parsed from Retry-After)
+    └── RateLimitError   429
 ```
 
-`Retry-After` is parsed from both legal forms — delta-seconds and HTTP-date —
-and never comes back negative.
+`Retry-After` is parsed on every status that sends it — not just 429, since
+503 uses it too — from both legal forms, delta-seconds and HTTP-date, and
+never comes back negative.
+
+---
+
+## Retries
+
+On by default, and only where a replay is safe.
+
+```js
+const client = new TerminalClient({
+  baseUrl, keyId, secret,
+  retry: { retries: 2, minDelayMs: 200, maxDelayMs: 10_000, factor: 2 },
+  onRetry: ({ attempt, delayMs, error }) => log.warn({ attempt, delayMs, status: error.status }),
+});
+```
+
+**What gets retried:** `NetworkError`, `TimeoutError`, `429`, `408`, and `5xx`.
+Nothing else. A 401 will still be a 401 in 200ms, and repeating a 400 just
+burns rate limit.
+
+**On which methods:** `GET`, `HEAD`, `PUT`, `DELETE`, `OPTIONS` — the ones
+where sending twice means the same as sending once.
+
+`POST` and `PATCH` are **not** retried automatically. When a capture times out,
+the request may well have reached the server and succeeded, with only the reply
+lost; replaying it charges the customer twice. That is the caller's decision to
+make, so it has to be stated:
+
+```js
+await client.post('/terminals/T-1/capture', { amount: 1250 }, { retry: true });
+await client.get('/terminals', { retry: false });
+```
+
+**Backoff:** exponential with **full jitter** — uniformly random over
+`[0, min(maxDelayMs, minDelayMs × factor^attempt)]`. Fixed backoff would
+resynchronise every client that failed during the same outage, so they all
+come back together and knock the service over again on the first retry.
+
+A server `Retry-After` overrides the computed delay — it is the only party that
+knows when capacity returns — but it is still capped at `maxDelayMs`, so a
+misconfigured header cannot park the caller for an hour.
+
+**Every attempt is signed afresh.** Reusing the first signature would send a
+timestamp one backoff older and a nonce the server may already have recorded,
+turning a retried 503 into a 401.
+
+Aborting the caller's signal during a backoff releases immediately rather than
+waiting out a timer nobody is interested in any more.
 
 ---
 
@@ -202,13 +250,21 @@ console.log(JSON.stringify(buildCanonicalRequest({
 | `fetch` | `globalThis.fetch` | Injectable for tests |
 | `defaultHeaders` | `{}` | Merged into every request |
 | `userAgent` | `hmac-terminal-client/<version>` | |
+| `retry` | see [Retries](#retries) | `false` disables |
+| `onRetry` | — | `({ attempt, delayMs, error, method, path }) => void` |
+| `random` | `Math.random` | Injectable for deterministic jitter |
 
 Methods: `request(method, path, options)` · `get` · `post` · `put` · `patch` ·
-`delete`. Per-call options: `query`, `body`, `headers`, `signal`, `timeoutMs`.
+`delete`. Per-call options: `query`, `body`, `headers`, `signal`, `timeoutMs`,
+`retry`.
 
 Signing primitives, all exported: `signRequest` · `verifyRequest` ·
 `buildCanonicalRequest` · `canonicalQuery` · `canonicalPath` · `hashBody` ·
 `computeSignature` · `constantTimeEquals` · `generateNonce` · `rfc3986`.
+
+Retry primitives, also exported so you can reuse the policy elsewhere:
+`isRetryableError` · `computeDelay` · `resolvePolicy` · `sleep` ·
+`DEFAULT_RETRY_POLICY` · `IDEMPOTENT_METHODS`.
 
 ---
 
@@ -236,7 +292,7 @@ length check happens first and fails the same way every other check does.
 ## Tests
 
 ```bash
-npm test        # 81 tests, node:test, no install required
+npm test        # 116 tests, node:test, no install required
 npm run coverage
 ```
 

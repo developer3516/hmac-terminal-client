@@ -6,6 +6,13 @@
  */
 
 import { ApiError, ConfigError, NetworkError, TimeoutError } from './errors.js';
+import {
+  DEFAULT_RETRY_POLICY,
+  computeDelay,
+  isRetryableError,
+  resolvePolicy,
+  sleep,
+} from './retry.js';
 import { canonicalQuery, signRequest } from './signature.js';
 
 const DEFAULT_TIMEOUT_MS = 10_000;
@@ -18,6 +25,9 @@ export class TerminalClient {
   #timeoutMs;
   #fetch;
   #defaultHeaders;
+  #retry;
+  #onRetry;
+  #random;
 
   /**
    * @param {object}   options
@@ -28,6 +38,9 @@ export class TerminalClient {
    * @param {Function}[options.fetch]         injectable for tests
    * @param {object}  [options.defaultHeaders]
    * @param {string}  [options.userAgent]
+   * @param {object|false} [options.retry]  policy overrides, or false to disable
+   * @param {Function}[options.onRetry]     called before each backoff
+   * @param {Function}[options.random]      injectable for deterministic jitter
    */
   constructor(options = {}) {
     const { baseUrl, keyId, secret } = options;
@@ -63,19 +76,57 @@ export class TerminalClient {
       ...lowercaseKeys(options.defaultHeaders ?? {}),
     };
 
+    this.#retry =
+      options.retry === false
+        ? { ...DEFAULT_RETRY_POLICY, retries: 0 }
+        : { ...DEFAULT_RETRY_POLICY, ...(options.retry ?? {}) };
+    this.#onRetry = options.onRetry ?? null;
+    this.#random = options.random ?? Math.random;
+
     if (typeof this.#fetch !== 'function') {
       throw new ConfigError('global fetch is unavailable — use Node 18+ or pass options.fetch');
     }
   }
 
   /**
-   * Send a signed request.
+   * Send a signed request, retrying transient failures.
    *
    * Resolves to `{ status, headers, data }`. The verb helpers below unwrap
    * `data` for you; reach for `request` when you need the status or a
    * response header.
+   *
+   * Retries are on by default for idempotent methods only. Pass
+   * `retry: true` to opt a POST or PATCH in, or `retry: false` to disable.
    */
-  async request(method, path, { query, body, headers, signal, timeoutMs } = {}) {
+  async request(method, path, options = {}) {
+    const policy = resolvePolicy(this.#retry, options.retry, method);
+
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        return await this.#send(method, path, options);
+      } catch (error) {
+        // A caller who aborted wants out, not another attempt.
+        if (options.signal?.aborted) throw error;
+        if (attempt >= policy.retries || !isRetryableError(error)) throw error;
+
+        const delayMs = computeDelay(attempt, policy, error.retryAfterMs ?? null, this.#random);
+        this.#onRetry?.({ attempt: attempt + 1, delayMs, error, method, path });
+
+        await sleep(delayMs, options.signal);
+      }
+    }
+  }
+
+  /**
+   * One attempt: sign, send, map the response.
+   *
+   * Signing lives here rather than in `request` so every attempt is signed
+   * afresh. Reusing the first signature would send a timestamp that is now
+   * one backoff older and a nonce the server may already have recorded —
+   * turning a retry of a 503 into a 401, which is a genuinely baffling thing
+   * to debug.
+   */
+  async #send(method, path, { query, body, headers, signal, timeoutMs } = {}) {
     const signedPath = `${this.#basePath}${path.startsWith('/') ? path : `/${path}`}`;
 
     const signed = signRequest({
