@@ -1,5 +1,7 @@
 export { TerminalClient } from './client.js';
 
+export { BulkError, DEFAULT_CONCURRENCY, partition, pool } from './bulk.js';
+
 export {
   ApiError,
   AuthError,

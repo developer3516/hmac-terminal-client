@@ -156,6 +156,60 @@ waiting out a timer nobody is interested in any more.
 
 ---
 
+## Bulk operations
+
+```js
+const results = await client.bulk(
+  terminalIds.map((id) => ({ method: 'POST', path: `/terminals/${id}/sync` })),
+  { concurrency: 4 },
+);
+
+const { fulfilled, rejected, skipped } = partition(results);
+```
+
+Two things make this worth having over `Promise.all(items.map(send))`.
+
+**The bound.** Mapping ten thousand items into `Promise.all` opens ten thousand
+sockets, trips the rate limiter on the first hundred, and turns the rest into
+retry pressure. A worker pool keeps a fixed number in flight and feeds from a
+queue.
+
+**Partial failure, which in a batch is the normal case.** `Promise.all` rejects
+on the first error and discards every other result — including the successes.
+For a batch of writes that is the worst possible outcome: you now know
+something failed but not what already went through, so you cannot safely retry
+any of it. `bulk` settles everything and returns one entry per input, **in
+input order**:
+
+```js
+{ status: 'fulfilled', value }   // { status, headers, data }
+{ status: 'rejected',  reason }  // the typed error
+{ status: 'skipped' }            // never attempted
+```
+
+`skipped` is deliberately not `rejected`. After a batch of payments, "we never
+sent this one" and "we sent it and it failed" call for completely different
+follow-up.
+
+`stopOnError: true` gives you fail-fast — and still hands back what it had:
+
+```js
+try {
+  await client.bulk(requests, { stopOnError: true });
+} catch (error) {
+  error.index;    // where it stopped
+  error.results;  // everything up to that point, including the successes
+}
+```
+
+When several workers fail at once, the reported failure is the earliest by
+*input position*, not whichever worker lost the race.
+
+`pool(items, handler, options)` is exported for the general case — it has
+nothing to do with HTTP and works over any async handler.
+
+---
+
 ## The signing scheme
 
 The canonical request is seven LF-separated lines, with no trailing newline:
@@ -255,8 +309,8 @@ console.log(JSON.stringify(buildCanonicalRequest({
 | `random` | `Math.random` | Injectable for deterministic jitter |
 
 Methods: `request(method, path, options)` · `get` · `post` · `put` · `patch` ·
-`delete`. Per-call options: `query`, `body`, `headers`, `signal`, `timeoutMs`,
-`retry`.
+`delete` · `bulk(requests, options)`. Per-call options: `query`, `body`,
+`headers`, `signal`, `timeoutMs`, `retry`.
 
 Signing primitives, all exported: `signRequest` · `verifyRequest` ·
 `buildCanonicalRequest` · `canonicalQuery` · `canonicalPath` · `hashBody` ·
@@ -265,6 +319,8 @@ Signing primitives, all exported: `signRequest` · `verifyRequest` ·
 Retry primitives, also exported so you can reuse the policy elsewhere:
 `isRetryableError` · `computeDelay` · `resolvePolicy` · `sleep` ·
 `DEFAULT_RETRY_POLICY` · `IDEMPOTENT_METHODS`.
+
+Bulk primitives: `pool` · `partition` · `BulkError` · `DEFAULT_CONCURRENCY`.
 
 ---
 
@@ -292,7 +348,7 @@ length check happens first and fails the same way every other check does.
 ## Tests
 
 ```bash
-npm test        # 116 tests, node:test, no install required
+npm test        # 141 tests, node:test, no install required
 npm run coverage
 ```
 
