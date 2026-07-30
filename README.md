@@ -2,7 +2,7 @@
 
 **Zero-dependency Node client for HMAC-signed terminal APIs.**
 
-![Node](https://img.shields.io/badge/node-%E2%89%A518-339933?logo=nodedotjs&logoColor=white)
+![Node](https://img.shields.io/badge/node-%E2%89%A518.3-339933?logo=nodedotjs&logoColor=white)
 ![Dependencies](https://img.shields.io/badge/dependencies-0-16A34A)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
@@ -42,7 +42,8 @@ finding out against a live endpoint.
 npm install hmac-terminal-client
 ```
 
-Node 18 or newer (the client uses the global `fetch`).
+Node 18.3 or newer — the client uses the global `fetch`, the CLI uses
+`util.parseArgs`. Both are built in; the package still has no dependencies.
 
 ---
 
@@ -210,6 +211,57 @@ nothing to do with HTTP and works over any async handler.
 
 ---
 
+## CLI
+
+```bash
+npx terminal-api sign GET /terminals -q status=active
+```
+
+The `sign` and `canonical` subcommands are the reason this exists. When a
+server rejects a signature there is nothing in the 401 to work with, and the
+fastest way through is to print the exact string this end hashed and diff it
+against the one the server built:
+
+```bash
+terminal-api canonical POST /terminals/T-1/capture -d '{"amount":1250}' \
+  --timestamp 1767225600 --nonce ff00ff00ff00ff00ff00ff00ff00ff00
+```
+
+```
+v1
+POST
+/terminals/T-1/capture
+dryRun=true
+1767225600
+ff00ff00ff00ff00ff00ff00ff00ff00
+9fb40105c56271ac9d6a8da0a6f584dd901d66e4d55081684160a5bc608c7b08
+```
+
+Pinning `--timestamp` and `--nonce` makes the output byte-for-byte
+reproducible, so the diff shows only what genuinely differs.
+
+| Command | |
+| :--- | :--- |
+| `request <METHOD> <PATH>` | sign and send |
+| `sign <METHOD> <PATH>` | print the signature headers without sending |
+| `canonical <METHOD> <PATH>` | print only the canonical request |
+| `verify <METHOD> <PATH>` | check supplied `-H` headers against a signature |
+
+`verify` prints its own canonical request on failure — again, so there is
+something to diff rather than just a verdict.
+
+**Exit codes** are distinct so scripts can branch on them: `0` success,
+`1` API error, `2` usage error, `3` network or timeout, `4` signature invalid.
+
+**Credentials** come from `TERMINAL_BASE_URL`, `TERMINAL_KEY_ID` and
+`TERMINAL_SECRET`. `--secret` works but warns: argv is readable by any process
+that can run `ps`, and it lands in shell history.
+
+> On Git Bash for Windows, MSYS rewrites `/terminals` into a Windows path
+> before the CLI ever sees it. Prefix with `MSYS_NO_PATHCONV=1`.
+
+---
+
 ## The signing scheme
 
 The canonical request is seven LF-separated lines, with no trailing newline:
@@ -348,7 +400,7 @@ length check happens first and fails the same way every other check does.
 ## Tests
 
 ```bash
-npm test        # 141 tests, node:test, no install required
+npm test        # 166 tests, node:test, no install required
 npm run coverage
 ```
 

@@ -4,14 +4,18 @@
   "description": "Zero-dependency Node client for HMAC-signed terminal APIs — canonical request signing, constant-time verification, and a signature self-test harness.",
   "type": "module",
   "engines": {
-    "node": ">=18"
+    "node": ">=18.3"
   },
   "main": "./src/index.js",
   "exports": {
     ".": "./src/index.js"
   },
+  "bin": {
+    "terminal-api": "./bin/terminal-api.js"
+  },
   "files": [
     "src",
+    "bin",
     "README.md",
     "LICENSE"
   ],
