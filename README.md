@@ -263,6 +263,79 @@ that can run `ps`, and it lands in shell history.
 
 ---
 
+## Webhooks
+
+The other direction: the server signs, you verify what arrived.
+
+```js
+import { verifyWebhook } from 'hmac-terminal-client';
+
+app.post('/hooks', express.raw({ type: 'application/json' }), (req, res) => {
+  const { valid, reason } = verifyWebhook({
+    secret: process.env.WEBHOOK_SECRET,
+    header: req.get('x-webhook-signature'),
+    payload: req.body,          // the raw Buffer — not a parsed object
+  });
+
+  if (!valid) return res.status(401).json({ error: reason });
+
+  const event = JSON.parse(req.body);   // parse only after verifying
+  res.sendStatus(200);
+});
+```
+
+### The raw body is the whole game
+
+The signature covers **the bytes that arrived**, not the object they parse
+into. Any framework handing you `req.body` as a parsed object has already
+destroyed the evidence — `JSON.parse` then `JSON.stringify` reorders keys,
+drops whitespace and re-encodes numbers, so the bytes you hash are no longer
+the bytes that were signed.
+
+The result is verification failing on perfectly legitimate deliveries, and the
+usual response to that is to turn verification off "temporarily".
+
+So `verifyWebhook` **refuses a parsed object** rather than quietly
+re-serialising one, and the error tells you how to fix it:
+
+```
+webhook body must be the raw string or Buffer that arrived, not a parsed
+object — re-serialising it changes the bytes and the signature will not match
+(in Express, use express.raw({ type: "application/json" }) on this route)
+```
+
+The suite proves the point: `{"event":"x","amount":1}` and
+`{"amount":1,"event":"x"}` parse identically and one of them must fail.
+
+### Secret rotation
+
+The header carries a timestamp and one or more signatures:
+
+```
+t=1767225600,v1=<hex>,v1=<hex>
+```
+
+Repeating `v1` is not a mistake. Mid-rotation the sender signs with the old
+secret and the new one, so receivers on either side of the rollout keep
+working. `verifyWebhook` accepts a single secret or an array, and matches
+against every candidate.
+
+Comparison never short-circuits on the first match — bailing early would leak,
+through timing, *which* secret matched, and during a rotation that is exactly
+the fact worth hiding.
+
+### Replay
+
+The timestamp is inside the signed payload, not just the header. Editing it to
+look fresh invalidates the signature rather than extending its life. Deliveries
+outside a five-minute window (configurable, enforced in both directions) are
+rejected.
+
+An unrecognised scheme is reported as such — `no v1 signature — header carries
+only v2` rather than the indistinguishable "no signature found".
+
+---
+
 ## TypeScript
 
 Types ship with the package — `src/index.d.ts`, no `@types` install, no build
@@ -432,7 +505,7 @@ length check happens first and fails the same way every other check does.
 ## Tests
 
 ```bash
-npm test        # 174 tests, node:test, no install required
+npm test        # 210 tests, node:test, no install required
 npm run coverage
 ```
 
