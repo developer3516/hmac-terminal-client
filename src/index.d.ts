@@ -150,6 +150,54 @@ export declare function verifyRequest(input: {
 }): VerifyResult;
 
 // ---------------------------------------------------------------------------
+// Webhooks
+// ---------------------------------------------------------------------------
+
+export declare const WEBHOOK_SIGNATURE_VERSION: 'v1';
+export declare const WEBHOOK_HEADER: 'x-webhook-signature';
+export declare const DEFAULT_WEBHOOK_TOLERANCE_MS: number;
+
+/**
+ * The raw bytes as delivered. A parsed object is deliberately not accepted —
+ * re-serialising changes the bytes and the signature will not match.
+ */
+export type RawBody = string | Uint8Array;
+
+export interface ParsedWebhookHeader {
+  timestamp: number | null;
+  signatures: string[];
+  /** `vN` schemes present but not understood, so a receiver can say so. */
+  unknownVersions: string[];
+}
+
+export declare function buildWebhookPayload(timestamp: number, rawBody: RawBody): Uint8Array;
+
+export declare function computeWebhookSignature(
+  secret: string | Uint8Array,
+  timestamp: number,
+  rawBody: RawBody,
+): string;
+
+export declare function parseWebhookHeader(header: string | null | undefined): ParsedWebhookHeader;
+
+export declare function signWebhook(input: {
+  secret?: string | Uint8Array;
+  /** Several secrets emit several `v1` entries — what a sender does mid rotation. */
+  secrets?: Array<string | Uint8Array>;
+  payload: RawBody;
+  timestamp?: number;
+}): { header: string; timestamp: number; signatures: string[] };
+
+export declare function verifyWebhook(input: {
+  secret?: string | Uint8Array | Array<string | Uint8Array>;
+  secrets?: Array<string | Uint8Array>;
+  header: string;
+  payload: RawBody;
+  toleranceMs?: number;
+  now?: number;
+}): VerifyResult;
+
+// ---------------------------------------------------------------------------
 // Retry
 // ---------------------------------------------------------------------------
 
