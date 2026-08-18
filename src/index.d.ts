@@ -220,6 +220,8 @@ export declare function resolvePolicy(
   clientPolicy: RetryPolicy,
   callOption: boolean | Partial<RetryPolicy> | undefined,
   method: string,
+  /** `replaySafe` lifts the method allowlist — the request carries a key. */
+  context?: { replaySafe?: boolean },
 ): RetryPolicy;
 
 export declare function computeDelay(
@@ -280,6 +282,35 @@ export declare function partition<T>(results: Array<SettledResult<T>>): {
 };
 
 // ---------------------------------------------------------------------------
+// Idempotency
+// ---------------------------------------------------------------------------
+
+export interface IdempotencyConfig {
+  /** Header carrying the key. Default `idempotency-key`. */
+  header: string;
+  /** Methods that get a key. Default `POST`, `PATCH`. */
+  methods: readonly string[];
+  generate: () => string;
+}
+
+export declare const DEFAULT_IDEMPOTENCY: Readonly<IdempotencyConfig>;
+
+/** `true` takes the defaults, `false`/`undefined` disables, an object merges. */
+export declare function resolveIdempotencyConfig(
+  option: boolean | Partial<IdempotencyConfig> | null | undefined,
+): IdempotencyConfig | null;
+
+/**
+ * The key for one logical request, or null. An explicit key always wins,
+ * including on a method the policy would skip.
+ */
+export declare function keyFor(
+  config: IdempotencyConfig | null,
+  method: string,
+  explicitKey?: string | null,
+): string | null;
+
+// ---------------------------------------------------------------------------
 // Pagination
 // ---------------------------------------------------------------------------
 
@@ -337,6 +368,8 @@ export interface TerminalClientOptions {
   onRetry?: (info: RetryInfo) => void;
   /** Injectable for deterministic jitter. */
   random?: () => number;
+  /** Key policy. `true` takes the defaults; omit or `false` to disable. */
+  idempotency?: boolean | Partial<IdempotencyConfig>;
 }
 
 export interface RequestOptions {
@@ -351,6 +384,11 @@ export interface RequestOptions {
    * method allowlist still applied.
    */
   retry?: boolean | Partial<RetryPolicy>;
+  /**
+   * Key for this request. Wins over the policy, and makes the request
+   * replay-safe, so a POST becomes retryable.
+   */
+  idempotencyKey?: string;
 }
 
 export interface TerminalResponse<T = unknown> {
