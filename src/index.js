@@ -49,3 +49,10 @@ export {
   signWebhook,
   verifyWebhook,
 } from './webhook.js';
+
+export {
+  PaginationError,
+  defaultCursorFrom,
+  defaultItemsFrom,
+  paginate,
+} from './pagination.js';

@@ -280,6 +280,46 @@ export declare function partition<T>(results: Array<SettledResult<T>>): {
 };
 
 // ---------------------------------------------------------------------------
+// Pagination
+// ---------------------------------------------------------------------------
+
+/** Raised when pagination cannot safely continue. */
+export declare class PaginationError extends TerminalError {
+  /** How many pages had been fetched when this was raised. */
+  readonly pages: number;
+  readonly cursor: unknown;
+
+  constructor(message: string, options?: { pages?: number; cursor?: unknown; cause?: unknown });
+}
+
+/** Checks `next_cursor`, `nextCursor`, `next`, `cursor`; null ends the walk. */
+export declare function defaultCursorFrom(data: unknown): unknown;
+
+/** Unwraps `items`, `data` or `results`, or passes a bare array through. */
+export declare function defaultItemsFrom<T = unknown>(data: unknown): T[];
+
+export interface PaginateOptions {
+  /** Page -> next cursor, or null/undefined to stop. */
+  cursorFrom?: (page: any) => unknown;
+  /** Safety valve. Throws `PaginationError` when tripped — never truncates. */
+  maxPages?: number;
+  signal?: AbortSignal;
+}
+
+export declare function paginate<Page>(
+  fetchPage: (cursor: unknown) => Promise<Page>,
+  options?: PaginateOptions,
+): AsyncGenerator<Page, void, undefined>;
+
+export interface ClientPaginateOptions extends RequestOptions {
+  /** Query parameter carrying the cursor. Default `cursor`. */
+  cursorParam?: string;
+  /** Reads the *payload*, not the `{ status, headers, data }` wrapper. */
+  cursorFrom?: (data: any, page: TerminalResponse) => unknown;
+  maxPages?: number;
+}
+
+// ---------------------------------------------------------------------------
 // Client
 // ---------------------------------------------------------------------------
 
@@ -342,4 +382,16 @@ export declare class TerminalClient {
     requests: BulkRequest[],
     options?: PoolOptions,
   ): Promise<Array<SettledResult<TerminalResponse<T>>>>;
+
+  /** Walk a paginated endpoint, yielding one page at a time. */
+  paginate<T = unknown>(
+    path: string,
+    options?: ClientPaginateOptions,
+  ): AsyncGenerator<TerminalResponse<T>, void, undefined>;
+
+  /** The same walk, flattened to individual items. */
+  paginateItems<T = unknown>(
+    path: string,
+    options?: ClientPaginateOptions & { itemsFrom?: (data: any) => T[] },
+  ): AsyncGenerator<T, void, undefined>;
 }

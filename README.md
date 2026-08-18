@@ -336,6 +336,61 @@ only v2` rather than the indistinguishable "no signature found".
 
 ---
 
+## Pagination
+
+```js
+for await (const terminal of client.paginateItems('/terminals', { query: { limit: 100 } })) {
+  await sync(terminal);
+}
+```
+
+The obvious version of this is a `while (cursor)` loop that accumulates every
+page into an array. It has two problems, and the second is why this module
+exists.
+
+**It holds everything in memory.** Listing 200,000 terminals to act on each one
+costs 200,000 objects of heap for no reason. `for await` hands them over a page
+at a time, and `break` stops the requests — a test asserts that breaking on the
+second page issues exactly two.
+
+**It trusts the server to say stop.** A misconfigured endpoint that echoes back
+the cursor it was given — or a `next` link pointing at the current page — turns
+that loop into an unkillable request flood against the API you were trying to
+be polite to. Nobody writes a guard for that until it has happened once:
+
+```
+PaginationError: Pagination looped: cursor abc123 was already followed after 2 pages
+```
+
+Every cursor is remembered, so a three-step cycle is caught as readily as an
+immediate repeat.
+
+`maxPages` is a second valve, and when it trips it **throws** rather than
+returning what it had. Silent truncation looks exactly like a complete result
+set, which is the worst way for this to fail. To stop early on purpose, `break`.
+
+Cursor extraction reads the payload, not the `{ status, headers, data }`
+wrapper — a default that searched the wrapper would find nothing and every walk
+would quietly end after one page. The default understands `next_cursor`,
+`nextCursor`, `next` and `cursor`; anything else gets an explicit `cursorFrom`:
+
+```js
+client.paginate('/terminals', {
+  cursorParam: 'page_token',
+  cursorFrom: (data) => data.pagination.next,
+  maxPages: 500,
+});
+```
+
+Every page is a fresh signed request. A walk over hundreds of pages outlives
+any single signature's tolerance window, so reusing one would start failing
+partway through.
+
+`paginate(fetchPage, options)` is exported for the general case — it has
+nothing to do with HTTP.
+
+---
+
 ## TypeScript
 
 Types ship with the package — `src/index.d.ts`, no `@types` install, no build
@@ -505,7 +560,7 @@ length check happens first and fails the same way every other check does.
 ## Tests
 
 ```bash
-npm test        # 210 tests, node:test, no install required
+npm test        # 238 tests, node:test, no install required
 npm run coverage
 ```
 

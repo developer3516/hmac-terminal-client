@@ -7,6 +7,7 @@
 
 import { pool } from './bulk.js';
 import { ApiError, ConfigError, NetworkError, TimeoutError } from './errors.js';
+import { defaultCursorFrom, defaultItemsFrom, paginate } from './pagination.js';
 import {
   DEFAULT_RETRY_POLICY,
   computeDelay,
@@ -228,6 +229,55 @@ export class TerminalClient {
         this.request(method, path, { signal: options.signal, ...callOptions }),
       options,
     );
+  }
+
+  /**
+   * Walk a paginated endpoint, yielding one page at a time.
+   *
+   * Every page is a fresh signed request, so a long walk cannot outlive its
+   * own signature.
+   *
+   * ```js
+   * for await (const page of client.paginate('/terminals', { query: { limit: 100 } })) {
+   *   process(page.data.items);
+   * }
+   * ```
+   *
+   * @param {string} path
+   * @param {object} [options]  request options plus:
+   *   `cursorParam` (default `cursor`), `cursorFrom`, `maxPages`
+   */
+  paginate(path, options = {}) {
+    const { cursorParam = 'cursor', cursorFrom, maxPages, signal, ...request } = options;
+
+    // Cursor extraction reads the payload, not the `{ status, headers, data }`
+    // wrapper this method yields — a default that searched the wrapper would
+    // never find a cursor and every walk would silently stop after one page.
+    const extract = cursorFrom ?? defaultCursorFrom;
+
+    return paginate(
+      (cursor) =>
+        this.request('GET', path, {
+          ...request,
+          signal,
+          query: cursor === undefined ? request.query : { ...request.query, [cursorParam]: cursor },
+        }),
+      { cursorFrom: (page) => extract(page.data, page), maxPages, signal },
+    );
+  }
+
+  /**
+   * The same walk, flattened to individual items.
+   *
+   * Pass `itemsFrom` when the payload does not use `items`, `data` or
+   * `results`.
+   */
+  async *paginateItems(path, options = {}) {
+    const { itemsFrom = defaultItemsFrom, ...rest } = options;
+
+    for await (const page of this.paginate(path, rest)) {
+      yield* itemsFrom(page.data);
+    }
   }
 }
 
