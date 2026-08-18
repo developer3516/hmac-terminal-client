@@ -7,6 +7,7 @@
 
 import { pool } from './bulk.js';
 import { ApiError, ConfigError, NetworkError, TimeoutError } from './errors.js';
+import { keyFor, resolveIdempotencyConfig } from './idempotency.js';
 import { defaultCursorFrom, defaultItemsFrom, paginate } from './pagination.js';
 import {
   DEFAULT_RETRY_POLICY,
@@ -30,6 +31,7 @@ export class TerminalClient {
   #retry;
   #onRetry;
   #random;
+  #idempotency;
 
   /**
    * @param {object}   options
@@ -43,6 +45,7 @@ export class TerminalClient {
    * @param {object|false} [options.retry]  policy overrides, or false to disable
    * @param {Function}[options.onRetry]     called before each backoff
    * @param {Function}[options.random]      injectable for deterministic jitter
+   * @param {object|boolean} [options.idempotency]  key policy; false to disable
    */
   constructor(options = {}) {
     const { baseUrl, keyId, secret } = options;
@@ -84,6 +87,7 @@ export class TerminalClient {
         : { ...DEFAULT_RETRY_POLICY, ...(options.retry ?? {}) };
     this.#onRetry = options.onRetry ?? null;
     this.#random = options.random ?? Math.random;
+    this.#idempotency = resolveIdempotencyConfig(options.idempotency);
 
     if (typeof this.#fetch !== 'function') {
       throw new ConfigError('global fetch is unavailable — use Node 18+ or pass options.fetch');
@@ -101,11 +105,19 @@ export class TerminalClient {
    * `retry: true` to opt a POST or PATCH in, or `retry: false` to disable.
    */
   async request(method, path, options = {}) {
-    const policy = resolvePolicy(this.#retry, options.retry, method);
+    // Minted once, here, and reused by every attempt below. A key generated
+    // per attempt would look like protection while still double-charging.
+    const idempotencyKey = keyFor(this.#idempotency, method, options.idempotencyKey);
+
+    // A key makes replay safe by construction, so the method allowlist that
+    // exists to prevent double-charging no longer needs to apply.
+    const policy = resolvePolicy(this.#retry, options.retry, method, {
+      replaySafe: idempotencyKey !== null,
+    });
 
     for (let attempt = 0; ; attempt += 1) {
       try {
-        return await this.#send(method, path, options);
+        return await this.#send(method, path, options, idempotencyKey);
       } catch (error) {
         // A caller who aborted wants out, not another attempt.
         if (options.signal?.aborted) throw error;
@@ -128,7 +140,7 @@ export class TerminalClient {
    * turning a retry of a 503 into a 401, which is a genuinely baffling thing
    * to debug.
    */
-  async #send(method, path, { query, body, headers, signal, timeoutMs } = {}) {
+  async #send(method, path, { query, body, headers, signal, timeoutMs } = {}, idempotencyKey = null) {
     const signedPath = `${this.#basePath}${path.startsWith('/') ? path : `/${path}`}`;
 
     const signed = signRequest({
@@ -152,6 +164,10 @@ export class TerminalClient {
       ...signed.headers,
       accept: 'application/json',
     };
+
+    if (idempotencyKey !== null) {
+      requestHeaders[this.#idempotency?.header ?? 'idempotency-key'] = idempotencyKey;
+    }
 
     const payload = serialiseBody(body, requestHeaders);
 

@@ -56,3 +56,5 @@ export {
   defaultItemsFrom,
   paginate,
 } from './pagination.js';
+
+export { DEFAULT_IDEMPOTENCY, keyFor, resolveIdempotencyConfig } from './idempotency.js';

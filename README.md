@@ -140,6 +140,9 @@ await client.post('/terminals/T-1/capture', { amount: 1250 }, { retry: true });
 await client.get('/terminals', { retry: false });
 ```
 
+Turning on [idempotency keys](#idempotency-keys) lifts that restriction
+properly — see below.
+
 **Backoff:** exponential with **full jitter** — uniformly random over
 `[0, min(maxDelayMs, minDelayMs × factor^attempt)]`. Fixed backoff would
 resynchronise every client that failed during the same outage, so they all
@@ -333,6 +336,53 @@ rejected.
 
 An unrecognised scheme is reported as such — `no v1 signature — header carries
 only v2` rather than the indistinguishable "no signature found".
+
+---
+
+## Idempotency keys
+
+The retry policy refuses to replay a `POST`, because a request that timed out
+may already have succeeded. That is the right default, but it is a *refusal*,
+not a solution: the write still needs to happen and the caller is left to work
+out whether it already did.
+
+```js
+const client = new TerminalClient({ baseUrl, keyId, secret, idempotency: true });
+
+await client.post('/terminals/T-1/capture', { amount: 1250 });
+// sends idempotency-key: 7c9e6679-...  and retries on 5xx, safely
+```
+
+The client sends a key with the write; the server records it against the
+outcome; a second request with the same key returns the first result instead of
+doing the work again. Replay stops being dangerous, so the retry can just
+happen — `POST` and `PATCH` become retryable the moment a key is attached.
+
+**The key is minted once per logical request and reused by every attempt.** This
+is the entire mechanism, and the easy way to get it wrong is to generate one
+per attempt — which looks like protection, costs a header, still double-charges,
+and convinces everyone the problem is handled. A test asserts one key across
+three attempts.
+
+The signature is the opposite: **fresh on every attempt**, because a replayed
+signature carries a stale timestamp and a used nonce. Stable key, fresh
+signature — confusing the two breaks one or the other, so both are pinned.
+
+Supply your own when the dedup boundary is outside this process:
+
+```js
+await client.post('/payouts', batch, { idempotencyKey: `payout-${job.id}` });
+```
+
+An explicit key wins over the policy, including on a method it would otherwise
+skip — a caller passing one has a reason.
+
+> **The key is not covered by the signature.** The scheme signs method, path,
+> query, timestamp, nonce and body, not arbitrary headers, so the key travels
+> as an unsigned dedup hint. Replay protection comes from the nonce and
+> timestamp, which *are* signed; the key deduplicates deliberate retries. A
+> test asserts it is absent from the canonical request rather than leaving that
+> to be inferred.
 
 ---
 
@@ -560,7 +610,7 @@ length check happens first and fails the same way every other check does.
 ## Tests
 
 ```bash
-npm test        # 238 tests, node:test, no install required
+npm test        # 263 tests, node:test, no install required
 npm run coverage
 ```
 

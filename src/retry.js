@@ -52,8 +52,12 @@ export function isRetryableError(error) {
  * `retry: false` disables retries. `retry: true` enables them *and* bypasses
  * the method allowlist — the explicit opt-in a POST needs. An object merges
  * into the client policy with the allowlist still applied.
+ *
+ * `replaySafe` lifts the allowlist too, and unlike `retry: true` it is not a
+ * caller taking responsibility — it means the request carries an idempotency
+ * key, so a replay is safe by construction rather than by promise.
  */
-export function resolvePolicy(clientPolicy, callOption, method) {
+export function resolvePolicy(clientPolicy, callOption, method, { replaySafe = false } = {}) {
   if (callOption === false) return { ...clientPolicy, retries: 0 };
 
   const policy = callOption === true || callOption === undefined
@@ -64,7 +68,8 @@ export function resolvePolicy(clientPolicy, callOption, method) {
   // replay, so the allowlist does not apply.
   if (callOption === true) return policy;
 
-  const allowed = policy.methods.some((m) => m.toUpperCase() === method.toUpperCase());
+  const allowed =
+    replaySafe || policy.methods.some((m) => m.toUpperCase() === method.toUpperCase());
   return allowed ? policy : { ...policy, retries: 0 };
 }
 
