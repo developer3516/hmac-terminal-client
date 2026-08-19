@@ -58,3 +58,14 @@ export {
 } from './pagination.js';
 
 export { DEFAULT_IDEMPOTENCY, keyFor, resolveIdempotencyConfig } from './idempotency.js';
+
+export {
+  HIDDEN_HEADERS,
+  REDACTED,
+  TRUNCATED_HEADERS,
+  redactHeaders,
+  redactUrl,
+  requestEvent,
+  responseEvent,
+  truncate,
+} from './redact.js';

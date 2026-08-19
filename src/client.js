@@ -9,6 +9,7 @@ import { pool } from './bulk.js';
 import { ApiError, ConfigError, NetworkError, TimeoutError } from './errors.js';
 import { keyFor, resolveIdempotencyConfig } from './idempotency.js';
 import { defaultCursorFrom, defaultItemsFrom, paginate } from './pagination.js';
+import { requestEvent, responseEvent } from './redact.js';
 import {
   DEFAULT_RETRY_POLICY,
   computeDelay,
@@ -32,6 +33,8 @@ export class TerminalClient {
   #onRetry;
   #random;
   #idempotency;
+  #onRequest;
+  #onResponse;
 
   /**
    * @param {object}   options
@@ -46,6 +49,8 @@ export class TerminalClient {
    * @param {Function}[options.onRetry]     called before each backoff
    * @param {Function}[options.random]      injectable for deterministic jitter
    * @param {object|boolean} [options.idempotency]  key policy; false to disable
+   * @param {Function}[options.onRequest]   called with a redacted request view
+   * @param {Function}[options.onResponse]  called with a redacted response view
    */
   constructor(options = {}) {
     const { baseUrl, keyId, secret } = options;
@@ -88,6 +93,8 @@ export class TerminalClient {
     this.#onRetry = options.onRetry ?? null;
     this.#random = options.random ?? Math.random;
     this.#idempotency = resolveIdempotencyConfig(options.idempotency);
+    this.#onRequest = options.onRequest ?? null;
+    this.#onResponse = options.onResponse ?? null;
 
     if (typeof this.#fetch !== 'function') {
       throw new ConfigError('global fetch is unavailable — use Node 18+ or pass options.fetch');
@@ -117,7 +124,7 @@ export class TerminalClient {
 
     for (let attempt = 0; ; attempt += 1) {
       try {
-        return await this.#send(method, path, options, idempotencyKey);
+        return await this.#send(method, path, options, idempotencyKey, attempt + 1);
       } catch (error) {
         // A caller who aborted wants out, not another attempt.
         if (options.signal?.aborted) throw error;
@@ -140,7 +147,13 @@ export class TerminalClient {
    * turning a retry of a 503 into a 401, which is a genuinely baffling thing
    * to debug.
    */
-  async #send(method, path, { query, body, headers, signal, timeoutMs } = {}, idempotencyKey = null) {
+  async #send(
+    method,
+    path,
+    { query, body, headers, signal, timeoutMs } = {},
+    idempotencyKey = null,
+    attempt = 1,
+  ) {
     const signedPath = `${this.#basePath}${path.startsWith('/') ? path : `/${path}`}`;
 
     const signed = signRequest({
@@ -174,6 +187,12 @@ export class TerminalClient {
     const effectiveTimeout = timeoutMs ?? this.#timeoutMs;
     const { signal: combined, cancel } = withTimeout(signal, effectiveTimeout);
 
+    // Redaction happens here rather than in the hook, so a caller cannot
+    // forget it. Reaching the raw headers means reaching past this method.
+    this.#onRequest?.(requestEvent({ method, url, headers: requestHeaders, attempt, idempotencyKey }));
+
+    const startedAt = Date.now();
+
     let response;
     try {
       response = await this.#fetch(url, {
@@ -193,6 +212,18 @@ export class TerminalClient {
     }
 
     const responseHeaders = headersToObject(response.headers);
+
+    this.#onResponse?.(
+      responseEvent({
+        method,
+        url,
+        status: response.status,
+        headers: responseHeaders,
+        durationMs: Date.now() - startedAt,
+        attempt,
+      }),
+    );
+
     const data = await parseBody(response);
 
     if (!response.ok) {
