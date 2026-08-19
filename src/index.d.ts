@@ -282,6 +282,60 @@ export declare function partition<T>(results: Array<SettledResult<T>>): {
 };
 
 // ---------------------------------------------------------------------------
+// Redaction and observability
+// ---------------------------------------------------------------------------
+
+export declare const REDACTED: string;
+/** Header names replaced entirely. */
+export declare const HIDDEN_HEADERS: readonly string[];
+/** Header names shown as a short prefix. */
+export declare const TRUNCATED_HEADERS: readonly string[];
+
+/** Enough to compare two values, never enough to reuse one. */
+export declare function truncate(value: unknown, keep?: number): string;
+
+/** Returns a new object; the input is never mutated. */
+export declare function redactHeaders(headers: unknown): Record<string, string>;
+
+export declare function redactUrl(url: string, sensitiveParams?: string[]): string;
+
+export interface RequestEvent {
+  method: string;
+  url: string;
+  headers: Record<string, string>;
+  attempt: number;
+  idempotencyKey: string | null;
+  /** The body is deliberately absent — see the README. */
+}
+
+export interface ResponseEvent {
+  method: string;
+  url: string;
+  status: number;
+  headers: Record<string, string>;
+  durationMs: number;
+  attempt: number;
+  requestId: string | null;
+}
+
+export declare function requestEvent(input: {
+  method: string;
+  url: string;
+  headers: Record<string, string>;
+  attempt: number;
+  idempotencyKey?: string | null;
+}): RequestEvent;
+
+export declare function responseEvent(input: {
+  method: string;
+  url: string;
+  status: number;
+  headers: Record<string, string>;
+  durationMs: number;
+  attempt: number;
+}): ResponseEvent;
+
+// ---------------------------------------------------------------------------
 // Idempotency
 // ---------------------------------------------------------------------------
 
@@ -370,6 +424,10 @@ export interface TerminalClientOptions {
   random?: () => number;
   /** Key policy. `true` takes the defaults; omit or `false` to disable. */
   idempotency?: boolean | Partial<IdempotencyConfig>;
+  /** Called before each attempt with an already-redacted view. */
+  onRequest?: (event: RequestEvent) => void;
+  /** Called after each response, error statuses included. */
+  onResponse?: (event: ResponseEvent) => void;
 }
 
 export interface RequestOptions {

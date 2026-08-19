@@ -339,6 +339,50 @@ only v2` rather than the indistinguishable "no signature found".
 
 ---
 
+## Observability, without leaking the thing you are protecting
+
+The obvious way to debug a signing problem is to log the request. The obvious
+way to log a request is `console.log(headers)` — which prints `x-signature` in
+full, and one copy-paste later the secret is in a log aggregator, indexed,
+replicated, retained. Nobody decides to do that; it happens while chasing a 401
+at eleven at night.
+
+So the hooks hand over an **already-redacted** view. Redaction is not a flag to
+remember — it is what the argument is:
+
+```js
+const client = new TerminalClient({
+  baseUrl, keyId, secret,
+  onRequest:  (e) => log.debug('→', e.method, e.url, { attempt: e.attempt, key: e.idempotencyKey }),
+  onResponse: (e) => log.debug('←', e.status, `${e.durationMs}ms`, { requestId: e.requestId }),
+});
+```
+
+| field | treatment | why |
+| :--- | :--- | :--- |
+| `x-signature` | `aaaaaaaa…(64)` | enough to compare two attempts, not enough to replay |
+| `authorization`, `cookie` | `[redacted]` | no useful prefix exists |
+| `x-api-key` | **kept** | a public identifier — hiding it makes logs useless |
+| `x-nonce` | **kept** | per-request and worthless to an attacker; the fastest way to confirm each attempt re-signed |
+| `idempotency-key` | **kept** | not a credential, and the single most useful field when tracing a retried write |
+| query `?token=`, `?secret=` | `[redacted]` | the other place credentials end up |
+
+**The body is not included at all.** It is the largest thing in the request and
+the most likely to hold card numbers, names and addresses — logging it by
+default would trade one leak for a worse one. Anyone who needs it has it at the
+call site already.
+
+Attempts are numbered, so a retried write is legible as one logical request
+rather than three unrelated ones. The response hook fires on error statuses too,
+but not when the request never arrived — a `NetworkError` produces a request
+event and no response event, which is exactly the shape of the failure.
+
+`redactHeaders` returns a new object and never mutates its input. A redactor
+that edited the outgoing headers would break the signature it was helping you
+debug; there is a test for that.
+
+---
+
 ## Conformance vectors
 
 A signing scheme is only useful if two independent implementations agree, and
@@ -659,7 +703,7 @@ length check happens first and fails the same way every other check does.
 ## Tests
 
 ```bash
-npm test        # 362 tests, node:test, no install required
+npm test        # 388 tests, node:test, no install required
 npm run coverage
 ```
 
