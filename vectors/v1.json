@@ -1,0 +1,291 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "scheme": "v1",
+  "algorithm": "HMAC-SHA256",
+  "encoding": "lowercase hex",
+  "description": "Conformance vectors for the v1 request signing scheme. Feed each request through your implementation with the given secret, timestamp and nonce; the canonical request and signature must match byte for byte.",
+  "canonicalRequestFormat": [
+    "scheme version",
+    "HTTP method, uppercase",
+    "path, leading slash, each segment RFC 3986 encoded",
+    "query, sorted by encoded key then encoded value",
+    "timestamp, unix seconds",
+    "nonce",
+    "SHA-256 of the body, lowercase hex"
+  ],
+  "separator": "LF, no trailing newline",
+  "secret": "conformance-secret-do-not-use-in-production",
+  "keyId": "ak_test_conformance",
+  "headers": {
+    "x-api-key": "keyId",
+    "x-timestamp": "timestamp",
+    "x-nonce": "nonce",
+    "x-signature": "signature",
+    "x-signature-version": "v1"
+  },
+  "vectors": [
+    {
+      "name": "get-no-query-no-body",
+      "catches": "baseline — the empty query line and the empty-body hash must both be present",
+      "request": {
+        "method": "GET",
+        "path": "/terminals",
+        "query": null,
+        "body": null
+      },
+      "timestamp": 1767225600,
+      "nonce": "ff00ff00ff00ff00ff00ff00ff00ff00",
+      "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "canonicalRequest": "v1\nGET\n/terminals\n\n1767225600\nff00ff00ff00ff00ff00ff00ff00ff00\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "signature": "f1bbd6a6233b87da20806134102b78a94ac28b397a4641f4df4d0dfae3a18109"
+    },
+    {
+      "name": "query-sorted-by-key",
+      "catches": "query parameters must sort, not follow insertion order",
+      "request": {
+        "method": "GET",
+        "path": "/terminals",
+        "query": {
+          "status": "active",
+          "limit": "10",
+          "cursor": "abc"
+        },
+        "body": null
+      },
+      "timestamp": 1767225600,
+      "nonce": "ff00ff00ff00ff00ff00ff00ff00ff00",
+      "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "canonicalRequest": "v1\nGET\n/terminals\ncursor=abc&limit=10&status=active\n1767225600\nff00ff00ff00ff00ff00ff00ff00ff00\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "signature": "f1d590f1a1ced0a4311d6a385ebc501a54871a927cde768808c138332f56936d"
+    },
+    {
+      "name": "query-repeated-key-sorted-by-value",
+      "catches": "repeated keys sort by value, not by the order supplied",
+      "request": {
+        "method": "GET",
+        "path": "/terminals",
+        "query": {
+          "tag": [
+            "z",
+            "a",
+            "m"
+          ]
+        },
+        "body": null
+      },
+      "timestamp": 1767225600,
+      "nonce": "ff00ff00ff00ff00ff00ff00ff00ff00",
+      "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "canonicalRequest": "v1\nGET\n/terminals\ntag=a&tag=m&tag=z\n1767225600\nff00ff00ff00ff00ff00ff00ff00ff00\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "signature": "fd4491b54a7b8d299b1d53931e5db16b2f9f41bae5e12d7cbff01008c8c5e401"
+    },
+    {
+      "name": "query-rfc3986-characters",
+      "catches": "encodeURIComponent leaves !'()* raw — RFC 3986 does not",
+      "request": {
+        "method": "GET",
+        "path": "/search",
+        "query": {
+          "q": "!'()*"
+        },
+        "body": null
+      },
+      "timestamp": 1767225600,
+      "nonce": "ff00ff00ff00ff00ff00ff00ff00ff00",
+      "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "canonicalRequest": "v1\nGET\n/search\nq=%21%27%28%29%2A\n1767225600\nff00ff00ff00ff00ff00ff00ff00ff00\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "signature": "0f9cab8f5331d7f3c667a68049151532ef3acfd39c8a68f9e3f6610b5c26e746"
+    },
+    {
+      "name": "query-space-is-percent-twenty",
+      "catches": "form encoding would emit + for a space",
+      "request": {
+        "method": "GET",
+        "path": "/search",
+        "query": {
+          "q": "front desk"
+        },
+        "body": null
+      },
+      "timestamp": 1767225600,
+      "nonce": "ff00ff00ff00ff00ff00ff00ff00ff00",
+      "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "canonicalRequest": "v1\nGET\n/search\nq=front%20desk\n1767225600\nff00ff00ff00ff00ff00ff00ff00ff00\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "signature": "b80d5c2138d31d4f118113078d149a45533daec2a1b7d92e44560a855aaaa96f"
+    },
+    {
+      "name": "query-reserved-characters",
+      "catches": "& and = inside a value must be encoded, in both key and value",
+      "request": {
+        "method": "GET",
+        "path": "/search",
+        "query": {
+          "a b": "c&d=e"
+        },
+        "body": null
+      },
+      "timestamp": 1767225600,
+      "nonce": "ff00ff00ff00ff00ff00ff00ff00ff00",
+      "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "canonicalRequest": "v1\nGET\n/search\na%20b=c%26d%3De\n1767225600\nff00ff00ff00ff00ff00ff00ff00ff00\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "signature": "b78234269218298e56f37524e9751d43a7189365483dac2273e0b20c886fcd11"
+    },
+    {
+      "name": "query-empty-value-kept",
+      "catches": "an empty string is a parameter; undefined and null are not",
+      "request": {
+        "method": "GET",
+        "path": "/terminals",
+        "query": {
+          "cursor": "",
+          "limit": "10"
+        },
+        "body": null
+      },
+      "timestamp": 1767225600,
+      "nonce": "ff00ff00ff00ff00ff00ff00ff00ff00",
+      "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "canonicalRequest": "v1\nGET\n/terminals\ncursor=&limit=10\n1767225600\nff00ff00ff00ff00ff00ff00ff00ff00\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "signature": "d5579c7142723df3b6a0843d2ca4eb3df0871ec6b4f6345cb1746cdbaa4e45d4"
+    },
+    {
+      "name": "query-unicode-value",
+      "catches": "non-ASCII must be UTF-8 encoded before percent-encoding",
+      "request": {
+        "method": "GET",
+        "path": "/search",
+        "query": {
+          "q": "café ✅"
+        },
+        "body": null
+      },
+      "timestamp": 1767225600,
+      "nonce": "ff00ff00ff00ff00ff00ff00ff00ff00",
+      "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "canonicalRequest": "v1\nGET\n/search\nq=caf%C3%A9%20%E2%9C%85\n1767225600\nff00ff00ff00ff00ff00ff00ff00ff00\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "signature": "8f37ffc6a7e2809a7fe128e6496294dd7342874987b13f95bd4a477838d48ecb"
+    },
+    {
+      "name": "path-encoded-segment",
+      "catches": "each path segment is encoded, and the slashes between them are not",
+      "request": {
+        "method": "GET",
+        "path": "/terminals/front desk/status",
+        "query": null,
+        "body": null
+      },
+      "timestamp": 1767225600,
+      "nonce": "ff00ff00ff00ff00ff00ff00ff00ff00",
+      "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "canonicalRequest": "v1\nGET\n/terminals/front%20desk/status\n\n1767225600\nff00ff00ff00ff00ff00ff00ff00ff00\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "signature": "f36a5616a2fb7c2985da7ce2ae8fc0d9b359ad5ccaedbe9ef6ca6da6461d11a5"
+    },
+    {
+      "name": "path-with-base-prefix",
+      "catches": "a base URL path prefix is part of the signed path",
+      "request": {
+        "method": "GET",
+        "path": "/v2/terminals",
+        "query": null,
+        "body": null
+      },
+      "timestamp": 1767225600,
+      "nonce": "ff00ff00ff00ff00ff00ff00ff00ff00",
+      "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "canonicalRequest": "v1\nGET\n/v2/terminals\n\n1767225600\nff00ff00ff00ff00ff00ff00ff00ff00\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "signature": "d5c444e24f44d06258f526cb6347a59ab0acf43ab0ab34b593efab73aa56e1ea"
+    },
+    {
+      "name": "post-json-body",
+      "catches": "the body is hashed as the exact bytes sent, not re-serialised",
+      "request": {
+        "method": "POST",
+        "path": "/terminals/T-1/capture",
+        "query": null,
+        "body": "{\"amount\":1250,\"currency\":\"AUD\"}"
+      },
+      "timestamp": 1767225600,
+      "nonce": "ff00ff00ff00ff00ff00ff00ff00ff00",
+      "bodySha256": "94b2804bd2e495916833e522381137695446455c8415c6e39ab2b193733ae847",
+      "canonicalRequest": "v1\nPOST\n/terminals/T-1/capture\n\n1767225600\nff00ff00ff00ff00ff00ff00ff00ff00\n94b2804bd2e495916833e522381137695446455c8415c6e39ab2b193733ae847",
+      "signature": "dcb9450e6b6a2ac2141d2c0fec4432eaa5180294c3c0bd183456d97c7999cdd8"
+    },
+    {
+      "name": "post-json-body-key-order-differs",
+      "catches": "key order changes the hash — same object, different bytes",
+      "request": {
+        "method": "POST",
+        "path": "/terminals/T-1/capture",
+        "query": null,
+        "body": "{\"currency\":\"AUD\",\"amount\":1250}"
+      },
+      "timestamp": 1767225600,
+      "nonce": "ff00ff00ff00ff00ff00ff00ff00ff00",
+      "bodySha256": "7bd6e993e1ee09935c5aa39ba2940da3f27eb3515732555d0bee49e0124d7372",
+      "canonicalRequest": "v1\nPOST\n/terminals/T-1/capture\n\n1767225600\nff00ff00ff00ff00ff00ff00ff00ff00\n7bd6e993e1ee09935c5aa39ba2940da3f27eb3515732555d0bee49e0124d7372",
+      "signature": "91835f7e260b0ca379da22e992dbee3d11f8df2e67603489f412d264873ed89f"
+    },
+    {
+      "name": "post-empty-body-string",
+      "catches": "an empty body and no body hash identically",
+      "request": {
+        "method": "POST",
+        "path": "/terminals",
+        "query": null,
+        "body": ""
+      },
+      "timestamp": 1767225600,
+      "nonce": "ff00ff00ff00ff00ff00ff00ff00ff00",
+      "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "canonicalRequest": "v1\nPOST\n/terminals\n\n1767225600\nff00ff00ff00ff00ff00ff00ff00ff00\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "signature": "2c5a272e0344e3e8cf4a570769a3d63eea65c323b232118a247ad6a8ad58b1a9"
+    },
+    {
+      "name": "post-unicode-body",
+      "catches": "the body is hashed as UTF-8 bytes",
+      "request": {
+        "method": "POST",
+        "path": "/notes",
+        "query": null,
+        "body": "{\"note\":\"café & co — 100% ✅\"}"
+      },
+      "timestamp": 1767225600,
+      "nonce": "ff00ff00ff00ff00ff00ff00ff00ff00",
+      "bodySha256": "ae15e27203c6bd2bc51aef57e354637b4fba09e0db98bbc79915e9064f935f4c",
+      "canonicalRequest": "v1\nPOST\n/notes\n\n1767225600\nff00ff00ff00ff00ff00ff00ff00ff00\nae15e27203c6bd2bc51aef57e354637b4fba09e0db98bbc79915e9064f935f4c",
+      "signature": "c18b29dbbd97660ca675f565347babfc7515363d89141d6905b45acb4eaeea26"
+    },
+    {
+      "name": "method-lowercase-input",
+      "catches": "the method is uppercased before signing",
+      "request": {
+        "method": "delete",
+        "path": "/terminals/T-1",
+        "query": null,
+        "body": null
+      },
+      "timestamp": 1767225600,
+      "nonce": "ff00ff00ff00ff00ff00ff00ff00ff00",
+      "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "canonicalRequest": "v1\nDELETE\n/terminals/T-1\n\n1767225600\nff00ff00ff00ff00ff00ff00ff00ff00\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "signature": "658d19fb44dcee6a032469dbb105f99963ac1e9b1b4a64eb6ecb34e9f87aac4b"
+    },
+    {
+      "name": "put-with-query-and-body",
+      "catches": "all seven lines together, in order",
+      "request": {
+        "method": "PUT",
+        "path": "/terminals/T-1",
+        "query": {
+          "force": "true"
+        },
+        "body": "{\"label\":\"front desk\"}"
+      },
+      "timestamp": 1767225600,
+      "nonce": "ff00ff00ff00ff00ff00ff00ff00ff00",
+      "bodySha256": "71ef4d95c0590301efd35dbf49b58f9c78c04c38f728c2c846170432d0250c53",
+      "canonicalRequest": "v1\nPUT\n/terminals/T-1\nforce=true\n1767225600\nff00ff00ff00ff00ff00ff00ff00ff00\n71ef4d95c0590301efd35dbf49b58f9c78c04c38f728c2c846170432d0250c53",
+      "signature": "7a85f978a78e49c110cafc2b2917e7ee5b4db7fdbb1d2ec588fb82732101a773"
+    }
+  ]
+}
