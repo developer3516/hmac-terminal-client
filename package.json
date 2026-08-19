@@ -20,13 +20,15 @@
   "files": [
     "src",
     "bin",
+    "vectors",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
     "test": "node --test",
     "test:watch": "node --test --watch",
-    "coverage": "node --test --experimental-test-coverage"
+    "coverage": "node --test --experimental-test-coverage",
+    "vectors": "node scripts/generate-vectors.js"
   },
   "keywords": [
     "hmac",

@@ -339,6 +339,55 @@ only v2` rather than the indistinguishable "no signature found".
 
 ---
 
+## Conformance vectors
+
+A signing scheme is only useful if two independent implementations agree, and
+"read the README carefully" is not a mechanism. `vectors/v1.json` is one:
+
+```json
+{
+  "name": "query-rfc3986-characters",
+  "catches": "encodeURIComponent leaves !'()* raw — RFC 3986 does not",
+  "request": { "method": "GET", "path": "/search", "query": { "q": "!'()*" } },
+  "timestamp": 1767225600,
+  "nonce": "ff00ff00ff00ff00ff00ff00ff00ff00",
+  "canonicalRequest": "v1
+GET
+/search
+q=%21%27%28%29%2A
+...",
+  "signature": "..."
+}
+```
+
+A server team writing the Python or Go half loads the file, feeds each request
+through their own code with the given secret, timestamp and nonce, and compares.
+No live endpoint, no arguing about which side is wrong.
+
+Sixteen cases, each named for the disagreement it exists to catch — a vector
+for the happy path proves almost nothing, while one for `!'()*` proves whether
+somebody reached for `encodeURIComponent`. Every one carries a `catches` field
+saying what a mismatch probably means, which is more use than a bad hash.
+
+Covered: query sorting by key and by value · RFC 3986 vs `encodeURIComponent` ·
+`%20` vs `+` · reserved characters in keys and values · empty value vs absent ·
+unicode in query and body · path segment encoding · base path prefixes · method
+casing · empty body vs no body · **JSON key order changing the hash**.
+
+The suite reads the committed file and checks the implementation reproduces it
+— never the reverse, which would be circular and pass regardless. So a change
+to the canonical form fails loudly, with a diff of the exact string that moved.
+
+```bash
+npm run vectors   # regenerate
+```
+
+Regenerating is a deliberate act. If the committed file changes, the wire format
+changed and every existing integration breaks — the diff is the warning, and it
+is meant to be read rather than waved through.
+
+---
+
 ## Idempotency keys
 
 The retry policy refuses to replay a `POST`, because a request that timed out
@@ -610,7 +659,7 @@ length check happens first and fails the same way every other check does.
 ## Tests
 
 ```bash
-npm test        # 263 tests, node:test, no install required
+npm test        # 362 tests, node:test, no install required
 npm run coverage
 ```
 
