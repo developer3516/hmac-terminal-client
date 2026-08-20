@@ -339,6 +339,53 @@ only v2` rather than the indistinguishable "no signature found".
 
 ---
 
+## Rate limiting
+
+**Bounded concurrency is not a bounded rate.** This is the confusion `bulk`
+makes easy to fall into: a pool of four workers against an endpoint that
+answers in 10ms issues four hundred requests a second. The concurrency setting
+is doing exactly what it promised — never more than four in flight — while the
+server sees a flood.
+
+Retries do not fix it either. Backoff is what happens *after* the limiter has
+already rejected you: the 429 was served, counted, and logged against your key.
+
+```js
+const client = new TerminalClient({
+  baseUrl, keyId, secret,
+  rateLimit: { requestsPerSecond: 25, burst: 50 },
+});
+```
+
+A token bucket, because that is the shape real limiters use: a sustained rate
+plus a burst allowance, so a caller idle for a minute can send a short burst
+immediately instead of being throttled to the average by a scheme with no
+memory. It refills **continuously** rather than on a timer — a tick-based
+refill makes a caller who arrives just after a tick wait a full interval for a
+token that was already three-quarters earned.
+
+Share one bucket across clients when they share a quota, which is the only way
+the total actually stays under it:
+
+```js
+const bucket = new TokenBucket({ requestsPerSecond: 25 });
+const live = new TerminalClient({ ...liveConfig, rateLimit: bucket });
+const test = new TerminalClient({ ...testConfig, rateLimit: bucket });
+```
+
+**Where the wait happens matters, twice over.** It is before signing, because a
+request queued behind a slow bucket would otherwise carry a timestamp minted
+minutes earlier — at a low enough rate it arrives outside the server's clock
+tolerance while being perfectly signed. And it is before the timeout starts,
+because a request that waited its turn should still get its full budget to run.
+
+It is also *inside* the attempt rather than around the retry loop: a retry is
+another request as far as the server's limiter is concerned, and letting
+retries skip the bucket turns a backoff storm into a rate-limit storm. A test
+asserts three attempts consume three tokens.
+
+---
+
 ## Observability, without leaking the thing you are protecting
 
 The obvious way to debug a signing problem is to log the request. The obvious
@@ -703,7 +750,7 @@ length check happens first and fails the same way every other check does.
 ## Tests
 
 ```bash
-npm test        # 388 tests, node:test, no install required
+npm test        # 410 tests, node:test, no install required
 npm run coverage
 ```
 
