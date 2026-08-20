@@ -71,3 +71,12 @@ export {
 } from './redact.js';
 
 export { DEFAULT_RATE_LIMIT, TokenBucket, resolveRateLimit } from './rate-limit.js';
+
+export {
+  CircuitBreaker,
+  CircuitOpenError,
+  DEFAULT_BREAKER,
+  CIRCUIT_STATE,
+  countsAsFailure,
+  resolveBreaker,
+} from './circuit-breaker.js';

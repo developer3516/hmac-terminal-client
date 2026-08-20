@@ -282,6 +282,65 @@ export declare function partition<T>(results: Array<SettledResult<T>>): {
 };
 
 // ---------------------------------------------------------------------------
+// Circuit breaker
+// ---------------------------------------------------------------------------
+
+export declare const CIRCUIT_STATE: {
+  readonly closed: 'closed';
+  readonly open: 'open';
+  readonly halfOpen: 'half-open';
+};
+
+export type CircuitState = 'closed' | 'open' | 'half-open';
+
+export interface BreakerConfig {
+  /** Consecutive failures before opening. Default 5. */
+  threshold?: number;
+  /** How long to stay open before admitting a probe. Default 30s. */
+  cooldownMs?: number;
+  now?: () => number;
+}
+
+export declare const DEFAULT_BREAKER: Readonly<{ threshold: number; cooldownMs: number }>;
+
+/** Thrown instead of sending, while the breaker is open. */
+export declare class CircuitOpenError extends TerminalError {
+  /** Milliseconds until the next probe is admitted. */
+  readonly retryAfterMs: number;
+  readonly failures: number;
+  /** The failure that opened the circuit. */
+  readonly lastError: unknown;
+
+  constructor(
+    message: string,
+    options?: { retryAfterMs?: number; failures?: number; lastError?: unknown },
+  );
+}
+
+/** The same predicate the retry policy uses, so the two cannot drift. */
+export declare function countsAsFailure(error: unknown): boolean;
+
+export declare class CircuitBreaker {
+  constructor(options?: BreakerConfig);
+
+  readonly state: CircuitState;
+  readonly failures: number;
+  /** Milliseconds until the next probe, or 0 when requests are flowing. */
+  readonly retryAfterMs: number;
+
+  /** Throws `CircuitOpenError` when the request should not be sent. */
+  assertAvailable(): void;
+  recordSuccess(): void;
+  recordFailure(error: unknown): void;
+  reset(): void;
+}
+
+export declare function resolveBreaker(
+  option: boolean | BreakerConfig | CircuitBreaker | null | undefined,
+  now?: () => number,
+): CircuitBreaker | null;
+
+// ---------------------------------------------------------------------------
 // Rate limiting
 // ---------------------------------------------------------------------------
 
@@ -468,6 +527,11 @@ export interface TerminalClientOptions {
    * pass a shared `TokenBucket` to share a quota across clients.
    */
   rateLimit?: number | RateLimitConfig | TokenBucket | false;
+  /**
+   * Fails fast during an outage instead of queueing timeouts. Share a
+   * `CircuitBreaker` across clients that talk to the same service.
+   */
+  circuitBreaker?: boolean | BreakerConfig | CircuitBreaker;
 }
 
 export interface RequestOptions {

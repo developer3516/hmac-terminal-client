@@ -339,6 +339,66 @@ only v2` rather than the indistinguishable "no signature found".
 
 ---
 
+## Circuit breaker
+
+Retries handle a blip. This handles an outage — and the difference matters,
+because the behaviour that rescues one failed request makes a hundred of them
+worse.
+
+When a service is genuinely down, every request still costs a full timeout
+before it fails, and with retries on, three of them. A queue that would take a
+minute against a healthy service takes an hour against a dead one, all of it
+spent waiting for connections that were never going to answer. The retries burn
+the rate limit recovery will need, and the caller's own latency collapses under
+work that cannot succeed.
+
+```js
+const client = new TerminalClient({
+  baseUrl, keyId, secret,
+  circuitBreaker: { threshold: 5, cooldownMs: 30_000 },
+});
+```
+
+After five consecutive failures the breaker opens and requests fail
+immediately, **without a socket**. After the cooldown it admits exactly one —
+the half-open probe — and decides from that single result.
+
+```js
+catch (error) {
+  if (error instanceof CircuitOpenError) {
+    scheduleFor(Date.now() + error.retryAfterMs);   // and error.lastError says why
+  }
+}
+```
+
+**Only failures that implicate the service count.** A 404 is a working service
+giving a correct answer; counting it means a caller looping over missing
+records trips the breaker for everyone else. Same for a 401. It uses the same
+predicate as the retry policy — if an error is not worth retrying it is not
+evidence of an outage either, and one answer to "is this the service's fault"
+beats two that can drift apart.
+
+A non-qualifying failure does not **reset** the count either. Neither counting
+nor resetting is deliberate: an intermittent outage interleaved with 404s would
+otherwise never trip.
+
+**Half-open admits one request, not one burst.** The obvious implementation
+flips a flag and releases everything waiting, which is precisely the thundering
+herd that knocked the service over. A failed probe reopens for a *full*
+cooldown — it just demonstrated the service is still down, so the next caller
+should not walk straight back in.
+
+The breaker is asked **before** a rate-limit token is spent or a signature
+minted. A refused request is not going out, and charging it a token would spend
+the quota recovery needs. Share a breaker across clients that talk to the same
+service:
+
+```js
+const breaker = new CircuitBreaker({ threshold: 5 });
+```
+
+---
+
 ## Rate limiting
 
 **Bounded concurrency is not a bounded rate.** This is the confusion `bulk`
@@ -750,7 +810,7 @@ length check happens first and fails the same way every other check does.
 ## Tests
 
 ```bash
-npm test        # 410 tests, node:test, no install required
+npm test        # 439 tests, node:test, no install required
 npm run coverage
 ```
 
