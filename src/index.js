@@ -69,3 +69,5 @@ export {
   responseEvent,
   truncate,
 } from './redact.js';
+
+export { DEFAULT_RATE_LIMIT, TokenBucket, resolveRateLimit } from './rate-limit.js';

@@ -282,6 +282,41 @@ export declare function partition<T>(results: Array<SettledResult<T>>): {
 };
 
 // ---------------------------------------------------------------------------
+// Rate limiting
+// ---------------------------------------------------------------------------
+
+export interface RateLimitConfig {
+  requestsPerSecond: number;
+  /** Tokens available after an idle period. Defaults to one second's worth. */
+  burst?: number | null;
+  /** Injectable clock, for tests. */
+  now?: () => number;
+}
+
+export declare const DEFAULT_RATE_LIMIT: Readonly<{ requestsPerSecond: number; burst: number | null }>;
+
+/** A continuously-refilling token bucket. Share one to share a quota. */
+export declare class TokenBucket {
+  constructor(options: RateLimitConfig);
+
+  readonly capacity: number;
+  /** Tokens available now, after accounting for elapsed time. */
+  readonly tokens: number;
+
+  /** Milliseconds until a token is available; zero when one is. */
+  delayMs(): number;
+  /** Take a token if one is free. */
+  tryTake(): boolean;
+  /** Wait for a token, then take it. Rejects if the signal aborts. */
+  take(signal?: AbortSignal): Promise<void>;
+}
+
+export declare function resolveRateLimit(
+  option: number | RateLimitConfig | TokenBucket | false | null | undefined,
+  now?: () => number,
+): TokenBucket | null;
+
+// ---------------------------------------------------------------------------
 // Redaction and observability
 // ---------------------------------------------------------------------------
 
@@ -428,6 +463,11 @@ export interface TerminalClientOptions {
   onRequest?: (event: RequestEvent) => void;
   /** Called after each response, error statuses included. */
   onResponse?: (event: ResponseEvent) => void;
+  /**
+   * Paces requests before they leave. A number is requests per second;
+   * pass a shared `TokenBucket` to share a quota across clients.
+   */
+  rateLimit?: number | RateLimitConfig | TokenBucket | false;
 }
 
 export interface RequestOptions {

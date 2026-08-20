@@ -10,6 +10,7 @@ import { ApiError, ConfigError, NetworkError, TimeoutError } from './errors.js';
 import { keyFor, resolveIdempotencyConfig } from './idempotency.js';
 import { defaultCursorFrom, defaultItemsFrom, paginate } from './pagination.js';
 import { requestEvent, responseEvent } from './redact.js';
+import { resolveRateLimit } from './rate-limit.js';
 import {
   DEFAULT_RETRY_POLICY,
   computeDelay,
@@ -35,6 +36,7 @@ export class TerminalClient {
   #idempotency;
   #onRequest;
   #onResponse;
+  #rateLimiter;
 
   /**
    * @param {object}   options
@@ -51,6 +53,7 @@ export class TerminalClient {
    * @param {object|boolean} [options.idempotency]  key policy; false to disable
    * @param {Function}[options.onRequest]   called with a redacted request view
    * @param {Function}[options.onResponse]  called with a redacted response view
+   * @param {object|number|false} [options.rateLimit]  token bucket, or false
    */
   constructor(options = {}) {
     const { baseUrl, keyId, secret } = options;
@@ -95,6 +98,7 @@ export class TerminalClient {
     this.#idempotency = resolveIdempotencyConfig(options.idempotency);
     this.#onRequest = options.onRequest ?? null;
     this.#onResponse = options.onResponse ?? null;
+    this.#rateLimiter = resolveRateLimit(options.rateLimit);
 
     if (typeof this.#fetch !== 'function') {
       throw new ConfigError('global fetch is unavailable — use Node 18+ or pass options.fetch');
@@ -154,6 +158,19 @@ export class TerminalClient {
     idempotencyKey = null,
     attempt = 1,
   ) {
+    // Before signing, and before the timeout clock starts. Both matter.
+    //
+    // Sign first and a request queued behind a slow bucket carries a
+    // timestamp minted minutes earlier — at a low enough rate the wait
+    // exceeds the server's clock tolerance and a correctly signed request
+    // arrives already expired. Start the timeout first and a request that
+    // waited its turn has no time left to actually run.
+    //
+    // Inside the attempt rather than around the retry loop, because a retry
+    // is another request as far as the server's limiter is concerned; letting
+    // retries skip the bucket turns a backoff storm into a rate-limit storm.
+    if (this.#rateLimiter) await this.#rateLimiter.take(signal);
+
     const signedPath = `${this.#basePath}${path.startsWith('/') ? path : `/${path}`}`;
 
     const signed = signRequest({
