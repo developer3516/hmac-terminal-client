@@ -6,6 +6,7 @@
  */
 
 import { pool } from './bulk.js';
+import { resolveBreaker } from './circuit-breaker.js';
 import { ApiError, ConfigError, NetworkError, TimeoutError } from './errors.js';
 import { keyFor, resolveIdempotencyConfig } from './idempotency.js';
 import { defaultCursorFrom, defaultItemsFrom, paginate } from './pagination.js';
@@ -37,6 +38,7 @@ export class TerminalClient {
   #onRequest;
   #onResponse;
   #rateLimiter;
+  #breaker;
 
   /**
    * @param {object}   options
@@ -54,6 +56,7 @@ export class TerminalClient {
    * @param {Function}[options.onRequest]   called with a redacted request view
    * @param {Function}[options.onResponse]  called with a redacted response view
    * @param {object|number|false} [options.rateLimit]  token bucket, or false
+   * @param {object|boolean} [options.circuitBreaker]  breaker, or false
    */
   constructor(options = {}) {
     const { baseUrl, keyId, secret } = options;
@@ -99,6 +102,7 @@ export class TerminalClient {
     this.#onRequest = options.onRequest ?? null;
     this.#onResponse = options.onResponse ?? null;
     this.#rateLimiter = resolveRateLimit(options.rateLimit);
+    this.#breaker = resolveBreaker(options.circuitBreaker);
 
     if (typeof this.#fetch !== 'function') {
       throw new ConfigError('global fetch is unavailable — use Node 18+ or pass options.fetch');
@@ -158,6 +162,12 @@ export class TerminalClient {
     idempotencyKey = null,
     attempt = 1,
   ) {
+    // Asked first, before anything is spent. An open circuit means the
+    // request is not going out, so taking a rate-limit token for it would
+    // charge a quota the request never used — and during an outage that is
+    // the quota recovery will need.
+    this.#breaker?.assertAvailable();
+
     // Before signing, and before the timeout clock starts. Both matter.
     //
     // Sign first and a request queued behind a slow bucket carries a
@@ -220,10 +230,14 @@ export class TerminalClient {
       });
     } catch (cause) {
       if (signal?.aborted) throw cause;
-      if (cause?.name === 'AbortError' || cause?.name === 'TimeoutError') {
-        throw new TimeoutError(effectiveTimeout, { cause });
-      }
-      throw new NetworkError(`${method.toUpperCase()} ${url} failed: ${cause.message}`, { cause });
+
+      const failure =
+        cause?.name === 'AbortError' || cause?.name === 'TimeoutError'
+          ? new TimeoutError(effectiveTimeout, { cause })
+          : new NetworkError(`${method.toUpperCase()} ${url} failed: ${cause.message}`, { cause });
+
+      this.#breaker?.recordFailure(failure);
+      throw failure;
     } finally {
       cancel();
     }
@@ -244,12 +258,19 @@ export class TerminalClient {
     const data = await parseBody(response);
 
     if (!response.ok) {
-      throw ApiError.from(response.status, {
+      const error = ApiError.from(response.status, {
         body: data,
         headers: responseHeaders,
         requestId: responseHeaders['x-request-id'] ?? null,
       });
+
+      // A 404 is a working service answering correctly; the breaker decides
+      // for itself which statuses implicate the service.
+      this.#breaker?.recordFailure(error);
+      throw error;
     }
+
+    this.#breaker?.recordSuccess();
 
     return { status: response.status, headers: responseHeaders, data };
   }
