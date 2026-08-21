@@ -339,6 +339,60 @@ only v2` rather than the indistinguishable "no signature found".
 
 ---
 
+## Conditional requests
+
+Polling a list endpoint every thirty seconds re-downloads the same payload
+every time. A conditional request turns that into a `304 Not Modified` — no
+body on the wire — and the client serves what it already had.
+
+```js
+const client = new TerminalClient({ baseUrl, keyId, secret, cache: true });
+
+await client.get('/terminals');   // 200, stores the ETag
+await client.get('/terminals');   // sends If-None-Match, gets 304, same result
+```
+
+The two things specific to a *signed* API, and the reason this is not a `Map`:
+
+**The cache key must exclude the signature.** Every request carries a fresh
+timestamp, nonce and signature. Key on the headers and the cache never hits;
+key on the URL alone and two different bodies collide. The key is the method,
+the signed path and the **canonical query** — the same form the signature is
+built from, which is convenient, because it is already order-independent:
+
+```js
+await client.get('/terminals', { query: { status: 'active', limit: 10 } });
+await client.get('/terminals', { query: { limit: 10, status: 'active' } });
+// one entry, and the second request revalidates rather than re-fetching
+```
+
+**A 304 has no body.** Returning `data: null` because the server correctly said
+"unchanged" would be a strange reward for a cache hit, so the stored response
+is substituted — **status included**. The caller sees the 200 it would have
+seen, plus `fromCache: true` if it cares.
+
+Only `GET` and `HEAD` are cached; a conditional `POST` means something else
+entirely and nothing here should be guessing. Only a `200` carrying an `ETag`
+or `Last-Modified` is stored — without a validator, keeping it would mean
+guessing at freshness, which is how a stale cache becomes a bug report. `ETag`
+is preferred over `Last-Modified` because a resource can change twice within
+one second and a date cannot express that.
+
+The cache is a **bounded LRU**. Unbounded in a long-running process is a memory
+leak with a friendly name: a paginating job walking a million cursors would
+hold every page it ever saw. Share one across clients that talk to the same
+service:
+
+```js
+const cache = new ResponseCache({ maxEntries: 500 });
+```
+
+An explicit `If-None-Match` from the caller wins over the stored one — someone
+setting it by hand has a reason, and the cache is a convenience that should not
+overrule it.
+
+---
+
 ## Circuit breaker
 
 Retries handle a blip. This handles an outage — and the difference matters,
@@ -810,7 +864,7 @@ length check happens first and fails the same way every other check does.
 ## Tests
 
 ```bash
-npm test        # 439 tests, node:test, no install required
+npm test        # 473 tests, node:test, no install required
 npm run coverage
 ```
 

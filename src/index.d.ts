@@ -282,6 +282,54 @@ export declare function partition<T>(results: Array<SettledResult<T>>): {
 };
 
 // ---------------------------------------------------------------------------
+// Conditional requests
+// ---------------------------------------------------------------------------
+
+export declare const CACHEABLE_METHODS: readonly string[];
+export declare const DEFAULT_CACHE: Readonly<{ maxEntries: number; methods: readonly string[] }>;
+
+export interface CacheEntry<T = unknown> {
+  status: number;
+  headers: Record<string, string>;
+  data: T;
+  etag: string | null;
+  lastModified: string | null;
+}
+
+export interface CacheConfig {
+  /** Entries to keep. Least recently used are evicted first. */
+  maxEntries?: number;
+  /** Methods eligible for caching. Default `GET`, `HEAD`. */
+  methods?: readonly string[];
+}
+
+/** A bounded LRU of validated responses. Share one to share a cache. */
+export declare class ResponseCache {
+  constructor(options?: CacheConfig);
+
+  readonly size: number;
+  readonly maxEntries: number;
+
+  get(key: string): CacheEntry | undefined;
+  set(key: string, entry: CacheEntry): void;
+  delete(key: string): boolean;
+  clear(): void;
+}
+
+/** Built from the canonical query, so parameter order does not split entries. */
+export declare function cacheKey(method: string, path: string, canonicalQuery: string): string;
+
+export declare function isCacheable(method: string, methods?: readonly string[]): boolean;
+/** Only a 200 that carries an ETag or Last-Modified. */
+export declare function isStorable(status: number, headers?: Record<string, string>): boolean;
+/** `If-None-Match`, or `If-Modified-Since` when that is all there is. */
+export declare function validatorHeaders(entry?: CacheEntry | null): Record<string, string>;
+
+export declare function resolveCache(
+  option: boolean | CacheConfig | ResponseCache | null | undefined,
+): ResponseCache | null;
+
+// ---------------------------------------------------------------------------
 // Circuit breaker
 // ---------------------------------------------------------------------------
 
@@ -532,6 +580,11 @@ export interface TerminalClientOptions {
    * `CircuitBreaker` across clients that talk to the same service.
    */
   circuitBreaker?: boolean | BreakerConfig | CircuitBreaker;
+  /**
+   * Revalidates GETs with `If-None-Match` and serves the stored body on a
+   * 304. Share a `ResponseCache` across clients to share the entries.
+   */
+  cache?: boolean | CacheConfig | ResponseCache;
 }
 
 export interface RequestOptions {
@@ -557,6 +610,11 @@ export interface TerminalResponse<T = unknown> {
   status: number;
   headers: Record<string, string>;
   data: T;
+  /**
+   * True when the server answered 304 and the stored body was substituted.
+   * `status` is the stored one, not the 304.
+   */
+  fromCache?: boolean;
 }
 
 export interface BulkRequest extends RequestOptions {

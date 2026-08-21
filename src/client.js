@@ -7,6 +7,7 @@
 
 import { pool } from './bulk.js';
 import { resolveBreaker } from './circuit-breaker.js';
+import { cacheKey, isCacheable, isStorable, resolveCache, validatorHeaders } from './cache.js';
 import { ApiError, ConfigError, NetworkError, TimeoutError } from './errors.js';
 import { keyFor, resolveIdempotencyConfig } from './idempotency.js';
 import { defaultCursorFrom, defaultItemsFrom, paginate } from './pagination.js';
@@ -39,6 +40,8 @@ export class TerminalClient {
   #onResponse;
   #rateLimiter;
   #breaker;
+  #cache;
+  #cacheMethods;
 
   /**
    * @param {object}   options
@@ -57,6 +60,7 @@ export class TerminalClient {
    * @param {Function}[options.onResponse]  called with a redacted response view
    * @param {object|number|false} [options.rateLimit]  token bucket, or false
    * @param {object|boolean} [options.circuitBreaker]  breaker, or false
+   * @param {object|boolean} [options.cache]  conditional-request cache
    */
   constructor(options = {}) {
     const { baseUrl, keyId, secret } = options;
@@ -103,6 +107,11 @@ export class TerminalClient {
     this.#onResponse = options.onResponse ?? null;
     this.#rateLimiter = resolveRateLimit(options.rateLimit);
     this.#breaker = resolveBreaker(options.circuitBreaker);
+    this.#cache = resolveCache(options.cache);
+    this.#cacheMethods =
+      typeof options.cache === 'object' && options.cache?.methods
+        ? options.cache.methods
+        : undefined;
 
     if (typeof this.#fetch !== 'function') {
       throw new ConfigError('global fetch is unavailable — use Node 18+ or pass options.fetch');
@@ -198,8 +207,20 @@ export class TerminalClient {
     const search = canonicalQuery(query);
     const url = `${this.#baseUrl}${signedPath}${search ? `?${search}` : ''}`;
 
+    // Keyed on the canonical query, never on the headers: every request
+    // carries a fresh nonce and signature, so a header-derived key would
+    // never hit. The canonical form is already order-independent, which is
+    // exactly the property a cache key needs.
+    const cacheable = this.#cache && isCacheable(method, this.#cacheMethods);
+    const key = cacheable ? cacheKey(method, signedPath, search) : null;
+    const cached = key ? this.#cache.get(key) : undefined;
+
     const requestHeaders = {
       ...this.#defaultHeaders,
+      // The cached validator goes in before the caller's headers, so an
+      // explicit `If-None-Match` wins. Someone setting one by hand has a
+      // reason; the cache is a convenience and should not overrule it.
+      ...(cached ? validatorHeaders(cached) : {}),
       ...lowercaseKeys(headers ?? {}),
       ...signed.headers,
       accept: 'application/json',
@@ -244,6 +265,26 @@ export class TerminalClient {
 
     const responseHeaders = headersToObject(response.headers);
 
+    // A 304 has no body. Handing back `data: null` because the server
+    // correctly said "unchanged" would be a strange reward for a cache hit,
+    // so the stored response is substituted — status included, since the
+    // caller should not have to know this happened.
+    if (response.status === 304 && cached) {
+      this.#breaker?.recordSuccess();
+      this.#onResponse?.(
+        responseEvent({
+          method,
+          url,
+          status: 304,
+          headers: responseHeaders,
+          durationMs: Date.now() - startedAt,
+          attempt,
+        }),
+      );
+
+      return { status: cached.status, headers: cached.headers, data: cached.data, fromCache: true };
+    }
+
     this.#onResponse?.(
       responseEvent({
         method,
@@ -272,7 +313,17 @@ export class TerminalClient {
 
     this.#breaker?.recordSuccess();
 
-    return { status: response.status, headers: responseHeaders, data };
+    if (key && isStorable(response.status, responseHeaders)) {
+      this.#cache.set(key, {
+        status: response.status,
+        headers: responseHeaders,
+        data,
+        etag: responseHeaders.etag ?? null,
+        lastModified: responseHeaders['last-modified'] ?? null,
+      });
+    }
+
+    return { status: response.status, headers: responseHeaders, data, fromCache: false };
   }
 
   get(path, options) {
