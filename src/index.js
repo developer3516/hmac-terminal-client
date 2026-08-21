@@ -80,3 +80,14 @@ export {
   countsAsFailure,
   resolveBreaker,
 } from './circuit-breaker.js';
+
+export {
+  CACHEABLE_METHODS,
+  DEFAULT_CACHE,
+  ResponseCache,
+  cacheKey,
+  isCacheable,
+  isStorable,
+  resolveCache,
+  validatorHeaders,
+} from './cache.js';
